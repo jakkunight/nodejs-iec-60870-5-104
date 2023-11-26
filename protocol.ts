@@ -48,10 +48,8 @@ export function AnswerToBuffer(answer: Answer): ArrayBuffer {
 		}
 		view.setUint8(2 + i, byte);
 		answer.checksum += byte;
-		console.log(`Checksum: ${answer.checksum}`);
 	}
 	view.setUint32((2 + answer.length), answer.checksum);
-	console.log(`Checksum in buffer: ${view.getUint32(2 + answer.length)}`);
 	return buffer;
 };
 
@@ -67,8 +65,3 @@ export function BufferToAnswer(buffer: ArrayBuffer): Answer {
 
 	return answer;
 };
-
-console.log(BufferToQuestion(QuestionToBuffer({
-	actionCode: 1,
-	checksum: 0
-})));
