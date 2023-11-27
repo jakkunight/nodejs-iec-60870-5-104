@@ -1,67 +1,219 @@
-export type Question = {
-	actionCode: number;
-	checksum: number;
-};
-
-export type Answer = {
-	actionCode: number;
+export type FieldSchema = { // The schema of a generic field.
+	name: string; // Associates the fieldname with its length in bytes.
 	length: number;
-	body: ArrayBuffer;
-	checksum: number;
+	primitive: "string" | "signedInt" | "unsignedInt" | "float" | "bool"
 };
 
-export function QuestionToBuffer(question: Question): ArrayBuffer {
+export type HeadSchema = FieldSchema[]; // Everything is a list of fields.
+export type BodySchema = FieldSchema[];
+export type TailSchema = FieldSchema[];
 
-	let size = 2;
-	let buffer = new ArrayBuffer(size);
-	let view = new DataView(buffer);
-	view.setUint8(0, question.actionCode);
-	question.checksum = 0;
-	view.setUint8(1, question.checksum);
-	return buffer;
+export type MessageSchema = { // A message in object form.
+	[key: string]: unknown
 };
 
-export function BufferToQuestion(buffer: ArrayBuffer): Question {
-	let view = new DataView(buffer);
+export type MessageStruct = { // The message structure.
+	head: HeadSchema; // The HEAD contains the most important information about how to interpret the Message and the BODY.
+	body?: BodySchema; // The BODY contains the message information itself. It's optional, if the HEAD is enough to understand the message.
+	tail?: TailSchema; // The TAIL just contains a check or indicates the end of the message. It can be optional.
+};
 
-	const question: Question = {
-		actionCode: view.getUint8(0),
-		checksum: view.getUint8(1)
+export type MessageBuffer = ArrayBuffer; // The message in binary form. ArrayBuffer is used for compatibility with Web Browsers instead of Node's Buffer.
+
+export class Message {
+	struct: MessageStruct = {
+		head: []
 	};
-	return question;
-}
+	buffer: MessageBuffer = new ArrayBuffer(0);
+	schema: MessageSchema = {};
 
-export function AnswerToBuffer(answer: Answer): ArrayBuffer {
-	let size = 10;
-	size += answer.length;
-	size += 4;
-	let buffer = new ArrayBuffer(size);
-	let view = new DataView(buffer);
-	view.setUint8(0, answer.actionCode);
-	view.setUint8(1, answer.length);
-	answer.checksum = 0;
-	for (let i = 0; i < answer.length; i++) {
-		const bytes = new Uint8Array(answer.body);
-		let byte = bytes.at(i);
-		if (!byte) {
-			continue;
+	constructor({
+		struct,
+		buffer,
+		schema
+	}: {
+		struct: MessageStruct,
+		buffer?: MessageBuffer,
+		schema?: MessageSchema
+	}) {
+		this.struct = struct;
+
+		// Don't convert anything:
+		if (schema && buffer) {
+			this.buffer = buffer;
+			this.schema = schema;
+			return;
 		}
-		view.setUint8(2 + i, byte);
-		answer.checksum += byte;
+
+		// Conversion from object to buffer:
+		if (schema) {
+			this.schema = schema;
+			let pointer = 0;
+			let size = 0;
+			let flatStruct = Object.values(struct).flat(2);
+			flatStruct.forEach(({ length }) => {
+				size += length;
+			});
+			this.buffer = new ArrayBuffer(size);
+			let view = new DataView(this.buffer);
+			flatStruct.forEach(({ name, length, primitive }) => {
+				console.log(`Byte offset: ${pointer}`);
+				if (primitive === "unsignedInt" || primitive === "bool") {
+					if (length === 1) {
+						view.setUint8(pointer, Number(this.schema[name]));
+					}
+					if (length === 2) {
+						view.setUint16(pointer, Number(this.schema[name]));
+					}
+					if (length === 4) {
+						view.setUint32(pointer, Number(this.schema[name]));
+					}
+					if (length === 8) {
+						view.setBigUint64(pointer, BigInt(Number(this.schema[name])));
+					}
+				}
+				if (primitive === "signedInt") {
+					if (length === 1) {
+						view.setInt8(pointer, Number(this.schema[name]));
+					}
+					if (length === 2) {
+						view.setInt16(pointer, Number(this.schema[name]));
+					}
+					if (length === 4) {
+						view.setInt32(pointer, Number(this.schema[name]));
+					}
+					if (length === 8) {
+						view.setBigInt64(pointer, BigInt(Number(this.schema[name])));
+					}
+				}
+				if (primitive === "bool") {
+					view.setUint8(pointer, Number(this.schema[name]));
+				}
+				if (primitive === "float") {
+					if (length === 4) {
+						view.setFloat32(pointer, Number(this.schema[name]));
+					}
+					if (length === 8) {
+						view.setFloat64(pointer, Number(this.schema[name]));
+					}
+				}
+				if (primitive === "string") {
+					for (let i = 0; i < length; i++) {
+						view.setUint8(pointer + i, (this.schema[name] as string).charCodeAt(i));
+					}
+				}
+				pointer += length;
+			});
+			return;
+		}
+
+		// Conversion from buffer to object:
+		if (buffer) {
+			this.buffer = buffer;
+			let pointer = 0;
+			let flatStruct = Object.values(struct).flat(2);
+			let view = new DataView(this.buffer);
+			flatStruct.forEach(({ name, length, primitive }) => {
+				console.log(`Byte offset: ${pointer}`);
+				if (primitive === "bool") {
+					this.schema[name] = Boolean(view.getUint8(pointer));
+				}
+				if (primitive === "unsignedInt") {
+					if (length === 1) {
+						this.schema[name] = view.getUint8(pointer);
+					}
+					if (length === 2) {
+						this.schema[name] = view.getUint16(pointer);
+					}
+					if (length === 4) {
+						this.schema[name] = view.getUint32(pointer);
+					}
+					if (length === 8) {
+						this.schema[name] = view.getBigUint64(pointer);
+					}
+				}
+				if (primitive === "signedInt") {
+					if (length === 1) {
+						this.schema[name] = view.getInt8(pointer);
+					}
+					if (length === 2) {
+						this.schema[name] = view.getInt16(pointer);
+					}
+					if (length === 4) {
+						this.schema[name] = view.getInt32(pointer);
+					}
+					if (length === 8) {
+						this.schema[name] = view.getBigInt64(pointer);
+					}
+				}
+				if (primitive === "float") {
+					if (length === 4) {
+						this.schema[name] = view.getFloat32(pointer);
+					}
+					if (length === 8) {
+						this.schema[name] = view.getFloat64(pointer);
+					}
+				}
+				if (primitive === "string") {
+					let codes: string[] = [];
+					for (let i = 0; i < length; i++) {
+						codes.push(String.fromCharCode(view.getUint8(pointer + i)));
+					}
+					this.schema[name] = codes.join("");
+				}
+				pointer += length;
+			});
+		}
+		if (!buffer && !schema) {
+			throw new Error("An object or a buffer must be provided to create a message.");
+		}
 	}
-	view.setUint32((2 + answer.length), answer.checksum);
-	return buffer;
 };
 
-export function BufferToAnswer(buffer: ArrayBuffer): Answer {
-	let view = new DataView(buffer);
+const head: HeadSchema = [
+	{
+		name: "action",
+		length: 1,
+		primitive: "unsignedInt"
+	}
+];
+const body: HeadSchema = [
+	{
+		name: "message",
+		length: 8,
+		primitive: "string"
+	}
+];
+const tail: HeadSchema = [
+	{
+		name: "end",
+		length: 2,
+		primitive: "signedInt"
+	}
+];
 
-	let answer: Answer = {
-		actionCode: view.getUint8(0),
-		length: view.getUint8(1),
-		body: buffer.slice(2, view.getUint8(1) + 2),
-		checksum: view.getUint32(2 + view.getUint8(1))
-	};
 
-	return answer;
-};
+const msg = new Message({
+	struct: {
+		head,
+		body,
+		tail
+	},
+	schema: {
+		action: 8,
+		message: "PAR_ASU",
+		end: 13
+	}
+});
+
+const msg2 = new Message({
+	struct: {
+		head,
+		body,
+		tail
+	},
+	buffer: msg.buffer
+});
+
+console.log(msg.buffer);
+console.log(msg2.schema);
